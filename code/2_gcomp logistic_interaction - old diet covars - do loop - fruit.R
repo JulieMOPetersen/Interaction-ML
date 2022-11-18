@@ -1,0 +1,149 @@
+##############################################################################################################################
+##################################### Interaction ML Analysis       ##########################################################
+##################################### AUTHOR: JMP                   ##########################################################
+##################################### DATE: 10.03.2022              ##########################################################
+##############################################################################################################################
+#--------------------------------------------------------------------------------------------------------------------
+#PREPARATION --------------------------------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------------------------------------
+#INSTALL TLVERSE
+#install.packages("devtools")
+#devtools::install_github("tlverse/tlverse")
+
+#INSTALL AND LOAD PACKAGES
+packages <- c("foreach","doParallel","boot","rmutil","mvtnorm","gam","sandwich","ggplot2", "SuperLearner","xgboost",
+              "devtools","glmnet","tmle","data.table","rpart","ranger","nnet","arm","earth","e1071","tidyverse",
+              "npcausal", "beepr", "fastDummies", "here", "remotes", "rlang", "riskCommunicator")
+for (package in packages) {
+  if (!require(package, character.only=T, quietly=T)) {
+    install.packages(package, repos='http://lib.stat.cmu.edu/R/CRAN')
+  }
+}
+for (package in packages) {
+  library(package, character.only=T)
+}
+
+remotes::install_github("tlverse/sl3")
+library(sl3)
+remotes::install_github("tlverse/tmle3")
+library(tmle3)
+
+sessionInfo()
+
+#Total Vegetable Consumption - Logistic with gComp
+
+#Interaction with Whole Grains
+if(Sys.info()["nodename"]=="EPIC02G44CTQ05P"|
+   Sys.info()["nodename"]=="EPI9TPH7M3"|
+   Sys.info()["nodename"]=="LAPTOP-KHT5IA2Q"|
+   Sys.info()["nodename"]=="BLACKBEAN"){
+  analysis <- read_csv(here("data","MLInteraction_Imputed_ffqavail_oldnutr_2022-09-27.csv"))
+}
+
+#Add in all interaction terms
+analysis$Iwhlg  <- analysis$f_totdens80_old * analysis$g_whldens_old
+analysis$Ifatratio  <- analysis$f_totdens80_old * analysis$fatratio_old
+analysis$Ip_tot  <- analysis$f_totdens80_old * analysis$p_totdens_old
+analysis$Ip_seaplant  <- analysis$f_totdens80_old * analysis$p_seaplantdens_old
+analysis$Id_tot  <- analysis$f_totdens80_old * analysis$d_totdens_old
+analysis$Iv_tot  <- analysis$f_totdens80_old * analysis$v_totdens_old
+analysis$Inwh_tot  <- analysis$f_totdens80_old * analysis$g_nwhldens_old
+analysis$Isod  <- analysis$f_totdens80_old * analysis$sodium_dens_old
+analysis$Iemptyc  <- analysis$f_totdens80_old * analysis$pct_emptyc_old
+analysis$Ibmi  <- analysis$f_totdens80_old * analysis$bmiprepreg
+analysis$Iacc  <- analysis$f_totdens80_old * analysis$momaccult1
+analysis$Iblack  <- analysis$f_totdens80_old * analysis$black
+analysis$Icollege  <- analysis$f_totdens80_old * analysis$college
+analysis$Iage  <- analysis$f_totdens80_old * analysis$momage
+analysis$Imarried  <- analysis$f_totdens80_old * analysis$married
+analysis$Iinsurpub  <- analysis$f_totdens80_old * analysis$insurpub
+analysis$Ismokerpre  <- analysis$f_totdens80_old * analysis$smokerpre
+analysis$Iplan  <- analysis$f_totdens80_old * analysis$pregplanned
+analysis$Ihtn  <- analysis$f_totdens80_old * analysis$prehtn
+analysis$Idiab  <- analysis$f_totdens80_old * analysis$prediab
+analysis$Idepress  <- analysis$f_totdens80_old * analysis$epds_tot_v1
+analysis$Istress  <- analysis$f_totdens80_old * analysis$stress_tot_v1
+analysis$Ianx  <- analysis$f_totdens80_old * analysis$anx_tot
+analysis$IMET  <- analysis$f_totdens80_old * analysis$METminwk
+analysis$Isleep  <- analysis$f_totdens80_old * analysis$sleepsat31
+
+#------------NO INTERACTION------------#
+#Using riskCommunicator package
+#  analysis$f_totdens80_old<-as.factor(analysis$f_totdens80_old)
+#  set.seed(123)
+#  F_notInt_logistic <- gComp(data = analysis, Y = "pree_acog", X = "f_totdens80_old",
+#                                   Z = c("g_whldens_old", "d_totdens_old", 
+# "p_totdens_old", "p_seaplantdens_old", "g_nwhldens_old", 
+# "fatratio_old", "pct_emptyc_old", "sodium_dens_old", 
+# "v_totdens_old", "bmiprepreg", "momaccult1", "black", 
+# "college", "momage", "married", "insurpub", "smokerpre", 
+# "pregplanned", "prehtn", "prediab", "epds_tot_v1", 
+# "stress_tot_v1", "anx_tot", "METminwk", "sleepsat31"), 
+#                                   outcome.type = "binary", R=100)
+#  F_notInt_logistic
+#RD = -0.014 (-0.030, 0.003)
+ 
+#Using Ashley's code (modified)
+covars = c("f_totdens80_old", "g_whldens_old", "d_totdens_old", 
+           "p_totdens_old", "p_seaplantdens_old", "g_nwhldens_old", 
+           "fatratio_old", "pct_emptyc_old", "sodium_dens_old", 
+           "v_totdens_old", "bmiprepreg", "momaccult1", "black", 
+           "college", "momage", "married", "insurpub", "smokerpre", 
+           "pregplanned", "prehtn", "prediab", "epds_tot_v1", 
+           "stress_tot_v1", "anx_tot", "METminwk", "sleepsat31")
+formulaVars = paste(covars,collapse = "+")
+modelForm <- as.formula(paste0("pree_acog ~ ", formulaVars)) 
+
+#' Regress the outcome against the confounders with interaction
+ms_model <- glm(modelForm,data=analysis,family=binomial("logit"))
+##' Generate predictions for everyone in the sample to obtain
+##' unexposed (mu0 predictions) and exposed (mu1 predictions) risks.
+mu1 <- predict(ms_model,newdata=transform(analysis,f_totdens80_old=1),type="response")
+mu0 <- predict(ms_model,newdata=transform(analysis,f_totdens80_old=0),type="response")
+
+#' Marginally adjusted risk difference
+marg_stand_RD <- mean(mu1)-mean(mu0)
+marg_stand_RD
+#RD -0.01410556
+
+#------------ADDING 2-WAY INTERACTION TERMS------------#
+
+#Using Ashley's modified code
+#Applying for loop
+for (i in c("Iwhlg", "Ifatratio", "Ip_tot", "Ip_seaplant", "Id_tot", 
+            "Iv_tot", "Inwh_tot", "Isod", "Iemptyc",
+            "Ibmi", "Iacc", "Iblack", "Icollege", "Iage", "Imarried", 
+            "Iinsurpub", "Ismokerpre", "Iplan", "Ihtn", "Idiab", 
+            "Idepress", "Istress", "Ianx", "IMET", "Isleep")) {
+
+  #' Marginal Standardization: version 1
+  covars = c("f_totdens80_old", "g_whldens_old", "d_totdens_old", 
+                   "p_totdens_old", "p_seaplantdens_old", "g_nwhldens_old", 
+                   "fatratio_old", "pct_emptyc_old", "sodium_dens_old", 
+                   "v_totdens_old", "bmiprepreg", "momaccult1", "black", 
+                   "college", "momage", "married", "insurpub", "smokerpre", 
+                    "pregplanned", "prehtn", "prediab", "epds_tot_v1", 
+                    "stress_tot_v1", "anx_tot", "METminwk", "sleepsat31")
+    formulaVars = paste(covars,collapse = "+")
+    modelForm <- as.formula(paste0("pree_acog ~ ", formulaVars, " + ", print(i))) ## include the interaction!
+  #' Regress the outcome against the confounders with interaction
+  ms_model <- glm(modelForm,data=analysis,family=binomial("logit"))
+  ##' Generate predictions for everyone in the sample to obtain
+  ##' unexposed (mu0 predictions) and exposed (mu1 predictions) risks.
+  mu1 <- predict(ms_model,newdata=transform(analysis,f_totdens80_old=1),type="response")
+  mu0 <- predict(ms_model,newdata=transform(analysis,f_totdens80_old=0),type="response")
+  
+  print(mean(mu1))
+  print(mean(mu0))
+  #' Marginally adjusted risk difference
+  marg_stand_RD <- mean(mu1)-mean(mu0)
+  print(marg_stand_RD)
+}
+# [1] "Iwhlg"
+# [1] 0.06283579
+# [1] 0.09366451
+# [1] -0.03082872
+# [1] "Ifatratio"
+# [1] 0.0428254
+# [1] 0.106054
+# [1] -0.06322859
